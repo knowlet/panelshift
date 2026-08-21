@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.3",
+  "downloadPath": "/downloads/panelshift-chrome-extension-v0.1.3.zip",
+  "fileName": "panelshift-chrome-extension-v0.1.3.zip",
+  "contentType": "application/zip",
+  "totalSize": 28622763,
+  "sha256": "f184a5c5647750b6f6579b31fe2cf76ff30dc5dbe29060fe34adf93b656f385e",
+  "partSize": 20971520,
+  "parts": [
+    {
+      "path": "/downloads/parts/panelshift-chrome-extension-v0.1.3.zip.part-001",
+      "size": 20971520,
+      "sha256": "bfeddb427aa8becac0c78efa354d5e6fc0048d7de13516f03ec1f23f4a12961a"
+    },
+    {
+      "path": "/downloads/parts/panelshift-chrome-extension-v0.1.3.zip.part-002",
+      "size": 7651243,
+      "sha256": "a572b024210b25c5f2af7e4b9f8e5f425b8eaac0176f77db2e664c495321b759"
+    }
+  ]
+}
