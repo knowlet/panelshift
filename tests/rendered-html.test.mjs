@@ -133,6 +133,27 @@ test("server-renders public privacy and support pages required by the extension 
   assert.match(support, /Network \/ CORS/);
 });
 
+test("home navigation keeps all eight accessible anchors across website routes", async () => {
+  for (const [pathname, expectedCount, brandClass, label] of [
+    ["/", 1, "landing-brand", "譯格 Panelshift 首頁"],
+    ["/try", 1, "brand-lockup", "返回譯格 Panelshift 首頁"],
+    ["/privacy", 3, "landing-brand", "譯格 Panelshift 首頁"],
+    ["/support", 3, "landing-brand", "譯格 Panelshift 首頁"],
+  ]) {
+    const html = await render(pathname);
+    const homeAnchors = [...html.matchAll(/<a\b[^>]*>/gi)]
+      .map(([tag]) => tag)
+      .filter((tag) => /\bhref="\/"/.test(tag));
+    assert.equal(homeAnchors.length, expectedCount, pathname);
+    const brand = homeAnchors.find((tag) => tag.includes(`class="${brandClass}"`));
+    assert.ok(brand, `${pathname} keeps its styled brand link`);
+    assert.ok(brand.includes(`aria-label="${label}"`), pathname);
+    for (const tag of homeAnchors) {
+      assert.doesNotMatch(tag, /\b(?:target|download)=/, pathname);
+    }
+  }
+});
+
 test("Chrome Web Store artwork has exact required pixel dimensions", async () => {
   const [screenshot, promo] = await Promise.all([
     readFile(new URL("../store-assets/panelshift-screenshot-1-1280x800.png", import.meta.url)),

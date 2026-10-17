@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -21,22 +22,22 @@ export default function SupportPage() {
     <div className="landing-page info-page">
       <header className="landing-header">
         <div className="landing-wrap landing-header-inner">
-          <a className="landing-brand" href="/" aria-label="譯格 Panelshift 首頁">
+          <Link className="landing-brand" href="/" aria-label="譯格 Panelshift 首頁">
             <span className="landing-brand-glyph" aria-hidden="true">譯</span>
             <span>
               <b>譯格</b>
               <small>PANELSHIFT</small>
             </span>
-          </a>
+          </Link>
 
           <nav className="info-header-nav" aria-label="支援頁導覽">
             <a href="/privacy">隱私權</a>
             <a aria-current="page" href="/support">支援</a>
           </nav>
 
-          <a className="landing-header-link" href="/">
+          <Link className="landing-header-link" href="/">
             回到首頁
-          </a>
+          </Link>
         </div>
       </header>
 
@@ -184,7 +185,7 @@ export default function SupportPage() {
           <span>譯格 PANELSHIFT</span>
           <span>English・日本語 → 繁體中文</span>
           <nav aria-label="頁尾導覽">
-            <a href="/">首頁</a>
+            <Link href="/">首頁</Link>
             <a href="/privacy">隱私權</a>
             <a href="/try">網頁版</a>
           </nav>

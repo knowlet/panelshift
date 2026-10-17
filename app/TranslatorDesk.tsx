@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   type ChangeEvent,
   type CSSProperties,
@@ -975,11 +976,11 @@ export function TranslatorDesk() {
   return (
     <main className="translator-shell">
       <header className="masthead">
-        <a className="brand-lockup" href="/" aria-label="返回譯格 Panelshift 首頁">
+        <Link className="brand-lockup" href="/" aria-label="返回譯格 Panelshift 首頁">
           <span className="brand-mark">譯格</span>
           <span className="brand-latin">PANELSHIFT</span>
           <span className="brand-beta">ENGLISH · 日本語 → 繁體中文</span>
-        </a>
+        </Link>
         <nav className="process-nav" aria-label="處理階段">
           {["置入", "辨識", "校稿", "輸出"].map((step, index) => (
             <span
