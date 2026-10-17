@@ -283,15 +283,12 @@ test("background requests image host access before performing a cross-origin fet
   };
   const fetch = async (url, options) => {
     order.push(["fetch", url, options]);
-    return {
-      ok: true,
-      status: 200,
-      headers: new Headers({
+    return new Response(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), {
+      headers: {
         "content-length": "4",
         "content-type": "image/jpeg",
-      }),
-      arrayBuffer: async () => Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]).buffer,
-    };
+      },
+    });
   };
 
   vm.runInNewContext(source, {
@@ -422,4 +419,143 @@ test("picker failures keep authorization, bridge, and restricted-page guidance d
     pickerFailureMessage(new PickerStartFailure("inject"), "https://chromewebstore.google.com/detail/example"),
     "Chrome 線上應用程式商店不允許頁面注入，請切到一般網頁。",
   );
+});
+
+
+const MB = 1024 * 1024;
+async function runBoundedFetch({ size = 40 * MB, declared, mime = 'image/png' } = {}) {
+  const source = await read("service-worker.js");
+  let consumed = 0, cancelled = false, listener;
+  const response = new Response(new ReadableStream({
+    pull(c) { if (consumed >= size) c.close(); else { const n = Math.min(MB, size - consumed); consumed += n; c.enqueue(new Uint8Array(n)); } },
+    cancel() { cancelled = true; },
+  }), { headers: { 'content-type': mime, ...(declared === undefined ? {} : {'content-length': String(declared)}) } });
+  const event = { addListener() {} };
+  const chrome = { action: { onClicked: event }, runtime: { onInstalled: event, onStartup: event, onMessage: {addListener(l) {listener = l;} } }, permissions: { contains: async () => true }, sidePanel: { setPanelBehavior: async () => {} } };
+  vm.runInNewContext(source, { chrome, console, URL, Set, TextEncoder, Uint8Array, btoa, fetch: async () => response });
+  const result = await new Promise(resolve => listener({ type:'PANELSHIFT_FETCH_IMAGE', url:'https://image.example/a.png' }, {}, resolve));
+  return { result, consumed, cancelled };
+}
+test('no-length oversized image is cancelled near the 20 MiB boundary', async () => {
+  const r = await runBoundedFetch();
+  assert.equal(r.result.code, 'too_large');
+  assert.ok(r.consumed <= 22 * MB, `read ${r.consumed / MB} MiB before rejecting`);
+  assert.equal(r.cancelled, true);
+});
+test('false-small content length cannot bypass streaming limit', async () => {
+  const r = await runBoundedFetch({declared: 4});
+  assert.equal(r.result.code, 'too_large');
+  assert.ok(r.consumed <= 22 * MB, `read ${r.consumed / MB} MiB before rejecting`);
+  assert.equal(r.cancelled, true);
+});
+test('small image still returns exact data', async () => {
+  const r = await runBoundedFetch({size: 4});
+  assert.equal(r.result.ok, true);
+  assert.equal(r.result.byteLength, 4);
+  assert.equal(r.result.dataUrl, 'data:image/png;base64,AAAAAA==');
+});
+test('declared oversized response is cancelled without consuming body', async () => {
+  const r = await runBoundedFetch({declared: 40 * MB});
+  assert.equal(r.result.code, 'too_large');
+  assert.ok(r.consumed <= MB);
+  assert.equal(r.cancelled, true);
+});
+
+async function runImageStream({
+  chunks = [],
+  declared,
+  readError = false,
+  cancelError = false,
+  nullBody = false,
+  mime = "image/png",
+} = {}) {
+  const source = await read("service-worker.js");
+  let index = 0;
+  let cancels = 0;
+  let listener;
+  const body = nullBody ? null : new ReadableStream({
+    pull(controller) {
+      if (index < chunks.length) controller.enqueue(chunks[index++]);
+      else if (readError) controller.error(new Error("read failed"));
+      else controller.close();
+    },
+    cancel() {
+      cancels += 1;
+      if (cancelError) throw new Error("cancel failed");
+    },
+  });
+  const response = new Response(body, {
+    headers: {
+      "content-type": mime,
+      ...(declared === undefined ? {} : { "content-length": String(declared) }),
+    },
+  });
+  const event = { addListener() {} };
+  const chrome = {
+    action: { onClicked: event },
+    runtime: {
+      onInstalled: event,
+      onStartup: event,
+      onMessage: { addListener(handler) { listener = handler; } },
+    },
+    permissions: { contains: async () => true },
+    sidePanel: { setPanelBehavior: async () => {} },
+  };
+  vm.runInNewContext(source, {
+    chrome, console, URL, Set, TextEncoder, Uint8Array, btoa,
+    fetch: async () => response,
+  });
+  const result = await new Promise((resolve) => listener({
+    type: "PANELSHIFT_FETCH_IMAGE",
+    url: "https://image.example/a.png",
+  }, {}, resolve));
+  assert.equal(body?.locked ?? false, false, "body reader lock must be released");
+  return { result, cancels };
+}
+
+test("image stream accepts exactly 20 MiB and rejects the next byte", async () => {
+  const cap = 20 * MB;
+  const exact = await runImageStream({ chunks: [new Uint8Array(cap)] });
+  assert.equal(exact.result.ok, true);
+  assert.equal(exact.result.byteLength, cap);
+  const over = await runImageStream({
+    chunks: [new Uint8Array(cap), new Uint8Array(1), new Uint8Array(1)],
+  });
+  assert.equal(over.result.code, "too_large");
+  assert.equal(over.cancels, 1);
+});
+
+test("image stream preserves nonzero bytes across uneven chunks and subarrays", async () => {
+  const { result } = await runImageStream({
+    chunks: [
+      Uint8Array.of(10, 11, 12).subarray(1),
+      Uint8Array.of(254),
+      new Uint8Array(0),
+      Uint8Array.of(255, 0),
+    ],
+  });
+  assert.equal(result.dataUrl, "data:image/png;base64,Cwz+/wA=");
+});
+
+test("image stream errors release the reader lock and retain the correct response", async () => {
+  const readFailure = await runImageStream({
+    chunks: [new Uint8Array(4)], readError: true,
+  });
+  assert.equal(readFailure.result.code, "fetch_failed");
+  for (const options of [
+    { chunks: [new Uint8Array(20 * MB + 1), new Uint8Array(1)] },
+    { declared: 20 * MB + 1, chunks: [new Uint8Array(1), new Uint8Array(1)] },
+  ]) {
+    const failedCancel = await runImageStream({ ...options, cancelError: true });
+    assert.equal(failedCancel.result.code, "too_large");
+    assert.equal(failedCancel.cancels, 1);
+  }
+});
+
+test("image stream preserves null-body and non-image response behavior", async () => {
+  const empty = await runImageStream({ nullBody: true });
+  assert.equal(empty.result.ok, true);
+  assert.equal(empty.result.byteLength, 0);
+  const nonImage = await runImageStream({ chunks: [Uint8Array.of(1)], mime: "text/plain" });
+  assert.equal(nonImage.result.code, "not_image");
 });

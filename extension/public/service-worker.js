@@ -148,12 +148,36 @@ async function fetchImage(url) {
 
   const declaredLength = Number(response.headers.get("content-length") || 0);
   if (declaredLength > MAX_IMAGE_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
     return { ok: false, code: "too_large", message: "圖片超過 20 MB。" };
   }
 
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > MAX_IMAGE_BYTES) {
-    return { ok: false, code: "too_large", message: "圖片超過 20 MB。" };
+  // Content-Length can be absent or inaccurate. Enforce the limit while
+  // reading, so a large or endless response is never buffered in full.
+  const chunks = [];
+  let byteLength = 0;
+  const reader = response.body?.getReader();
+  if (reader) {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        byteLength += value.byteLength;
+        if (byteLength > MAX_IMAGE_BYTES) {
+          await reader.cancel().catch(() => undefined);
+          return { ok: false, code: "too_large", message: "圖片超過 20 MB。" };
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
   }
 
   const mime = response.headers.get("content-type")?.split(";")[0] || "image/png";
@@ -161,11 +185,11 @@ async function fetchImage(url) {
     return { ok: false, code: "not_image", message: "選取的網址不是圖片內容。" };
   }
 
-  const base64 = bytesToBase64(new Uint8Array(buffer));
+  const base64 = bytesToBase64(bytes);
   return {
     ok: true,
     dataUrl: `data:${mime};base64,${base64}`,
-    byteLength: buffer.byteLength,
+    byteLength,
     mime,
   };
 }
