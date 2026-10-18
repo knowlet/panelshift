@@ -1,3 +1,4 @@
+import Link from "next/link";
 const STORE_URL = "https://chromewebstore.google.com/detail/panelshift/dokfdbdcdiocconacblgcjdhipmjagnm";
 const DOWNLOAD_URL = "/downloads/panelshift-chrome-extension-v0.1.3.zip";
 
@@ -6,13 +7,13 @@ export default function Home() {
     <div className="landing-page">
       <header className="landing-header">
         <div className="landing-wrap landing-header-inner">
-          <a className="landing-brand" href="/" aria-label="譯格 Panelshift 首頁">
+          <Link className="landing-brand" href="/" aria-label="譯格 Panelshift 首頁">
             <span className="landing-brand-glyph" aria-hidden="true">譯</span>
             <span>
               <b>譯格</b>
               <small>PANELSHIFT</small>
             </span>
-          </a>
+          </Link>
 
           <nav className="landing-nav" aria-label="主要導覽">
             <a href="#features">功能</a>

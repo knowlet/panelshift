@@ -86,9 +86,13 @@ npm run lint
 npm run build:extension
 npm run test:extension
 npm test
+npx playwright install --with-deps chromium
+npm run test:browser
 ```
 
 The extension tests statically verify the Manifest V3 permission surface, sandbox CSP boundary, packaged ONNX Runtime assets, page picker and overlay bridge, stale-result guards, and bounded cross-origin image fetching. The generated ZIP is also checked with `unzip -t artifacts/panelshift-chrome-extension.zip`.
+
+Product CI runs these checks on pull requests to `develop` and pushes to `develop`. The browser suite uses the built production worker with a local test-only HTTP adapter and Chromium. It checks all eight home links, client-side navigation without a document reload, and repeated Back/Forward navigation. It blocks external requests and does not run OCR or call translation services. It does not deploy or publish extension archives.
 
 ## Main technologies
 
