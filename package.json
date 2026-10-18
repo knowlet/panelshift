@@ -16,7 +16,8 @@
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "test:extension": "npm run build:extension && node --test tests/extension.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern extension-dist --ignore-pattern artifacts --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@paddleocr/paddleocr-js": "^0.4.2",
@@ -28,6 +29,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
+    "@playwright/test": "1.64.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
