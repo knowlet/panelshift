@@ -56,7 +56,7 @@ interface OcrRunner {
 }
 
 interface ChromeTranslator {
-  translate(text: string): Promise<string>;
+  translate(text: string, options?: { signal?: AbortSignal }): Promise<string>;
   destroy?: () => void;
 }
 
@@ -68,6 +68,7 @@ interface ChromeTranslatorStatic {
   create(options: {
     sourceLanguage: string;
     targetLanguage: string;
+    signal?: AbortSignal;
     monitor?: (monitor: {
       addEventListener(
         type: "downloadprogress",
@@ -147,7 +148,9 @@ function parseTranslationPayload(content: string, regions: TranslationRegion[]) 
 async function translateWithCompatibleApi(
   regions: TranslationRegion[],
   settings: ApiSettings,
+  signal: AbortSignal,
 ) {
+  signal.throwIfAborted();
   if (!settings.apiKey || !settings.model || !settings.baseUrl) {
     throw new Error("API_NOT_CONFIGURED");
   }
@@ -160,6 +163,7 @@ async function translateWithCompatibleApi(
   }));
   const response = await fetch(endpoint, {
     method: "POST",
+    signal,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${settings.apiKey}`,
@@ -183,6 +187,7 @@ async function translateWithCompatibleApi(
   const data = (await response.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
+  signal.throwIfAborted();
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error("TRANSLATION_EMPTY");
   return parseTranslationPayload(content, regions);
@@ -191,39 +196,73 @@ async function translateWithCompatibleApi(
 async function translateWithChrome(
   regions: TranslationRegion[],
   onProgress: (progress: number) => void,
+  signal: AbortSignal,
 ) {
+  signal.throwIfAborted();
   const Translator = getTranslatorApi();
   if (!Translator) throw new Error("CHROME_TRANSLATOR_UNAVAILABLE");
   const cache = new Map<string, ChromeTranslator>();
   const translations: string[] = [];
-
-  for (let index = 0; index < regions.length; index += 1) {
-    const region = regions[index];
-    const sourceLanguage = region.sourceLanguage;
-    let translator = cache.get(sourceLanguage);
-    if (!translator) {
-      const availability = await Translator.availability({
-        sourceLanguage,
-        targetLanguage: "zh-Hant",
-      });
-      if (availability === "unavailable") {
-        throw new Error("CHROME_LANGUAGE_UNAVAILABLE");
+  const destroyTranslators = () => {
+    cache.forEach((translator) => {
+      try {
+        translator.destroy?.();
+      } catch {
+        // One failed cleanup must not keep other translators alive.
       }
-      translator = await Translator.create({
-        sourceLanguage,
-        targetLanguage: "zh-Hant",
-        monitor(monitor) {
-          monitor.addEventListener("downloadprogress", (event) => {
-            onProgress(72 + Math.round(event.loaded * 12));
-          });
-        },
-      });
-      cache.set(sourceLanguage, translator);
+    });
+    cache.clear();
+  };
+  signal.addEventListener("abort", destroyTranslators, { once: true });
+
+  try {
+    for (let index = 0; index < regions.length; index += 1) {
+      signal.throwIfAborted();
+      const region = regions[index];
+      const sourceLanguage = region.sourceLanguage;
+      let translator = cache.get(sourceLanguage);
+      if (!translator) {
+        const availability = await Translator.availability({
+          sourceLanguage,
+          targetLanguage: "zh-Hant",
+        });
+        signal.throwIfAborted();
+        if (availability === "unavailable") {
+          throw new Error("CHROME_LANGUAGE_UNAVAILABLE");
+        }
+        translator = await Translator.create({
+          sourceLanguage,
+          targetLanguage: "zh-Hant",
+          signal,
+          monitor(monitor) {
+            monitor.addEventListener("downloadprogress", (event) => {
+              if (!signal.aborted) onProgress(72 + Math.round(event.loaded * 12));
+            });
+          },
+        });
+        // A provider can finish creation after cancellation. Keep it owned by
+        // this call so the finally block also destroys late instances.
+        cache.set(sourceLanguage, translator);
+      }
+      signal.throwIfAborted();
+      const translation = await translator.translate(region.sourceText, { signal });
+      signal.throwIfAborted();
+      translations.push(translation);
+      onProgress(76 + Math.round(((index + 1) / regions.length) * 22));
     }
-    translations.push(await translator.translate(region.sourceText));
-    onProgress(76 + Math.round(((index + 1) / regions.length) * 22));
+    return translations;
+  } finally {
+    signal.removeEventListener("abort", destroyTranslators);
+    destroyTranslators();
   }
-  return translations;
+}
+
+async function disposeOcrRunner(runner: OcrRunner) {
+  try {
+    await runner.dispose?.();
+  } catch {
+    // Cleanup must not resurrect a cancelled job or reject an effect cleanup.
+  }
 }
 
 function createDemoPage() {
@@ -512,8 +551,26 @@ export function TranslatorDesk() {
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   const proofRefs = useRef(new Map<string, HTMLDivElement>());
   const ocrRunners = useRef(new Map<string, OcrRunner>());
+  const activeOcrRunners = useRef(new Set<OcrRunner>());
   const jobToken = useRef(0);
+  const jobController = useRef<AbortController | null>(null);
   const imageUrlRef = useRef<string | null>(null);
+
+  const cancelJob = useCallback(() => {
+    jobToken.current += 1;
+    jobController.current?.abort();
+    jobController.current = null;
+    // Do not let a new job reuse a runner whose prediction is still settling.
+    // Idle runners can stay cached until the workbench itself is unmounted.
+    for (const [key, runner] of ocrRunners.current) {
+      if (activeOcrRunners.current.has(runner)) {
+        ocrRunners.current.delete(key);
+        void disposeOcrRunner(runner);
+      }
+    }
+    activeOcrRunners.current.clear();
+    return jobToken.current;
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -535,13 +592,15 @@ export function TranslatorDesk() {
   useEffect(() => {
     const runners = ocrRunners.current;
     return () => {
+      cancelJob();
       if (imageUrlRef.current) URL.revokeObjectURL(imageUrlRef.current);
+      imageUrlRef.current = null;
       runners.forEach((runner) => {
-        void runner.dispose?.();
+        void disposeOcrRunner(runner);
       });
       runners.clear();
     };
-  }, []);
+  }, [cancelJob]);
 
   const fitCanvas = useCallback(() => {
     const viewport = canvasViewportRef.current;
@@ -570,8 +629,10 @@ export function TranslatorDesk() {
       setStatus("error");
       return;
     }
+    const token = cancelJob();
     try {
       const size = await imageSize(blob);
+      if (jobToken.current !== token) return;
       if (!size.width || !size.height) throw new Error("INVALID_IMAGE");
       if (imageUrlRef.current) URL.revokeObjectURL(imageUrlRef.current);
       const url = URL.createObjectURL(blob);
@@ -587,10 +648,11 @@ export function TranslatorDesk() {
       setEngineUsed(null);
       setWorkspaceTab("canvas");
     } catch {
+      if (jobToken.current !== token) return;
       setError("無法開啟這張圖片。請確認檔案沒有損毀。");
       setStatus("error");
     }
-  }, []);
+  }, [cancelJob]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -620,8 +682,10 @@ export function TranslatorDesk() {
   };
 
   const loadDemo = async () => {
+    const token = cancelJob();
     setStatusText("正在準備示範頁");
     const blob = await createDemoPage();
+    if (jobToken.current !== token) return;
     await loadBlob(blob, "panelshift-sample.png");
   };
 
@@ -638,7 +702,8 @@ export function TranslatorDesk() {
   );
 
   const runTranslation = useCallback(
-    async (nextRegions: TranslationRegion[], token: number) => {
+    async (nextRegions: TranslationRegion[], token: number, signal: AbortSignal) => {
+      signal.throwIfAborted();
       if (engine === "ocr") {
         setEngineUsed("僅辨識文字");
         return;
@@ -647,7 +712,7 @@ export function TranslatorDesk() {
       setProgress(76);
 
       const runChromeFallback = async () => {
-        const translations = await translateWithChrome(nextRegions, setProgress);
+        const translations = await translateWithChrome(nextRegions, setProgress, signal);
         if (jobToken.current !== token) return;
         updateTranslations(translations);
         setEngineUsed("Chrome Translator");
@@ -662,6 +727,7 @@ export function TranslatorDesk() {
         const translations = await translateWithCompatibleApi(
           nextRegions,
           apiSettings,
+          signal,
         );
         if (jobToken.current !== token) return;
         updateTranslations(translations);
@@ -674,12 +740,14 @@ export function TranslatorDesk() {
           const translations = await translateWithCompatibleApi(
             nextRegions,
             apiSettings,
+            signal,
           );
           if (jobToken.current !== token) return;
           updateTranslations(translations);
           setEngineUsed("OpenAI 相容 API");
           return;
         } catch {
+          signal.throwIfAborted();
           setNotice("外部翻譯暫時不可用，已改用 Chrome Translator。");
         }
       }
@@ -690,8 +758,10 @@ export function TranslatorDesk() {
 
   const runOcr = async () => {
     if (!image) return;
-    const token = jobToken.current + 1;
-    jobToken.current = token;
+    const token = cancelJob();
+    const controller = new AbortController();
+    jobController.current = controller;
+    const { signal } = controller;
     setStatus("processing");
     setError(null);
     setNotice(null);
@@ -712,10 +782,12 @@ export function TranslatorDesk() {
         window.location.origin,
       ).href;
       const getRunner = async (mode: "worker" | "compatible") => {
+        signal.throwIfAborted();
         const runnerKey = `PP-OCRv5-multilingual-${mode}`;
         let runner = ocrRunners.current.get(runnerKey);
         if (!runner) {
           const { PaddleOCR } = await import("@paddleocr/paddleocr-js");
+          signal.throwIfAborted();
           runner = (await PaddleOCR.create({
             lang: modelLanguage,
             ocrVersion: "PP-OCRv5",
@@ -733,6 +805,10 @@ export function TranslatorDesk() {
               disableWasmProxy: true,
             },
           })) as OcrRunner;
+          if (signal.aborted) {
+            await disposeOcrRunner(runner);
+            signal.throwIfAborted();
+          }
           ocrRunners.current.set(runnerKey, runner);
         }
         return { runner, runnerKey };
@@ -740,15 +816,25 @@ export function TranslatorDesk() {
 
       const predict = async (mode: "worker" | "compatible") => {
         const { runner, runnerKey } = await getRunner(mode);
+        signal.throwIfAborted();
+        activeOcrRunners.current.add(runner);
         try {
-          return await runner.predict(image.blob, {
+          const result = await runner.predict(image.blob, {
             textDetBoxThresh: 0.5,
             textRecScoreThresh: 0.35,
           });
+          signal.throwIfAborted();
+          return result;
         } catch (caught) {
-          ocrRunners.current.delete(runnerKey);
-          await runner.dispose?.().catch(() => undefined);
+          // A cancelled prediction may settle after a replacement runner has
+          // been cached. Only release the runner this prediction still owns.
+          if (ocrRunners.current.get(runnerKey) === runner) {
+            ocrRunners.current.delete(runnerKey);
+            await disposeOcrRunner(runner);
+          }
           throw caught;
+        } finally {
+          activeOcrRunners.current.delete(runner);
         }
       };
 
@@ -807,7 +893,7 @@ export function TranslatorDesk() {
     }
 
     try {
-      await runTranslation(nextRegions, token);
+      await runTranslation(nextRegions, token, signal);
       if (jobToken.current !== token) return;
       setProgress(100);
       setStatus("done");
@@ -828,7 +914,7 @@ export function TranslatorDesk() {
   };
 
   const stopProcessing = () => {
-    jobToken.current += 1;
+    cancelJob();
     setStatus(image ? "ready" : "idle");
     setProgress(0);
     setStatusText("已停止處理");
@@ -847,18 +933,22 @@ export function TranslatorDesk() {
   };
 
   const translateOne = async (region: TranslationRegion) => {
+    const token = jobToken.current;
+    const { signal } = (jobController.current ??= new AbortController());
     setStatusText(`正在重譯 ${region.id.replace("region-", "")}`);
     try {
       let translation: string;
       if (engine === "chrome" || engine === "auto") {
-        [translation] = await translateWithChrome([region], setProgress);
+        [translation] = await translateWithChrome([region], setProgress, signal);
       } else {
-        [translation] = await translateWithCompatibleApi([region], apiSettings);
+        [translation] = await translateWithCompatibleApi([region], apiSettings, signal);
       }
+      if (jobToken.current !== token) return;
       updateRegion(region.id, { translation });
       setStatusText("校樣已更新");
       setNotice("這一段譯文已更新。");
     } catch {
+      if (jobToken.current !== token) return;
       setNotice("這一段目前無法重譯，你仍可直接在校樣欄修改。");
     }
   };
