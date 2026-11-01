@@ -13,20 +13,21 @@
     "postbuild": "node build/prune-ocr-wasm.mjs",
     "prepare:site-download": "node build/prepare-site-download.mjs",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run test:workbench && npm run build && node --test tests/rendered-html.test.mjs",
+    "test": "npm run test:build && npm run test:workbench && npm run build && node --test tests/rendered-html.test.mjs",
     "test:workbench": "node --experimental-vm-modules --test tests/workbench-cancellation.test.mjs",
     "test:extension": "npm run build:extension && node --test tests/extension.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern extension-dist --ignore-pattern artifacts --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "test:build": "node --test tests/prune-ocr-wasm.test.mjs"
   },
   "dependencies": {
     "@paddleocr/paddleocr-js": "^0.4.2",
     "drizzle-orm": "0.45.2",
     "next": "16.2.6",
     "onnxruntime-web": "1.27.0",
-    "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
@@ -36,17 +37,18 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
+    "@vitejs/plugin-rsc": "0.5.37",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
-    "react-server-dom-webpack": "19.2.6",
-    "react-test-renderer": "19.2.6",
+    "react-server-dom-webpack": "19.3.1",
+    "react-test-renderer": "19.3.1",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
     "vinext": "1.4.0",
     "vite": "8.3.5",
-    "wrangler": "4.92.0"
+    "wrangler": "4.92.0",
+    "miniflare": "4.20260515.0"
   },
   "type": "module"
 }

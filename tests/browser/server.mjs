@@ -4,22 +4,14 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestWorker } from "../worker-runtime.mjs";
 
 const assetsRoot = fileURLToPath(new URL("../../dist/client/", import.meta.url));
 const mimeTypes = {
   ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml",
   ".png": "image/png", ".wasm": "application/wasm", ".json": "application/json",
 };
-// Same compatibility shim as the rendered HTML suite. Download streaming is
-// covered there; these browser tests only exercise website navigation.
-globalThis.FixedLengthStream = class {
-  constructor() {
-    const stream = new TransformStream();
-    this.readable = stream.readable;
-    this.writable = stream.writable;
-  }
-};
-const { default: worker } = await import("../../dist/server/index.js");
+const runtime = await createTestWorker(fetchAsset);
 
 async function fetchAsset(request) {
   const filename = path.resolve(assetsRoot, `.${decodeURIComponent(new URL(request.url).pathname)}`);
@@ -40,9 +32,8 @@ const server = http.createServer(async (incoming, outgoing) => {
     });
     let response = await fetchAsset(request);
     if (response.status === 404) {
-      response = await worker.fetch(request, { ASSETS: { fetch: fetchAsset } }, {
-        waitUntil(promise) { promise.catch(console.error); },
-        passThroughOnException() {},
+      response = await runtime.dispatchFetch(request.url, {
+        method: request.method, headers: request.headers,
       });
     }
     outgoing.writeHead(response.status, Object.fromEntries(response.headers));
@@ -55,5 +46,5 @@ const server = http.createServer(async (incoming, outgoing) => {
 });
 server.listen(4173, "127.0.0.1");
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => server.close(() => process.exit(0)));
+  process.on(signal, () => server.close(async () => { await runtime.dispose(); process.exit(0); }));
 }

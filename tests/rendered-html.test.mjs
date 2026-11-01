@@ -2,25 +2,12 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { access, readFile, stat } from "node:fs/promises";
 import test from "node:test";
+import { createTestWorker } from "./worker-runtime.mjs";
 
 const templateRoot = new URL("../", import.meta.url);
 const downloadPath = "/downloads/panelshift-chrome-extension-v0.1.3.zip";
 const storeUrl = "https://chromewebstore.google.com/detail/panelshift/dokfdbdcdiocconacblgcjdhipmjagnm";
 const staticAssetLimit = 25 * 1024 * 1024;
-let workerImportSequence = 0;
-
-// Cloudflare provides this identity stream in production. Node does not, but
-// vinext's built worker expects it while rendering responses in this test.
-if (typeof globalThis.FixedLengthStream === "undefined") {
-  globalThis.FixedLengthStream = class FixedLengthStream {
-    constructor() {
-      const stream = new TransformStream();
-      this.readable = stream.readable;
-      this.writable = stream.writable;
-    }
-  };
-}
-
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -48,29 +35,23 @@ async function invoke(
     headers = {},
   } = {},
 ) {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerImportSequence += 1;
-  workerUrl.searchParams.set(
-    "test",
-    `${process.pid}-${Date.now()}-${workerImportSequence}`,
-  );
-  const { default: worker } = await import(workerUrl.href);
-
-  return worker.fetch(
-    new Request(new URL(pathname, "http://localhost"), {
+  const runtime = await createTestWorker(assetFetch);
+  try {
+    const response = await runtime.dispatchFetch(new URL(pathname, "http://localhost"), {
       method,
       headers: {
         accept: pathname.endsWith(".zip") ? "application/zip" : "text/html",
         host: "localhost",
         ...headers,
       },
-    }),
-    { ASSETS: { fetch: assetFetch } },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
-  );
+    });
+    const body = await response.arrayBuffer();
+    return new Response(body, {
+      status: response.status, headers: response.headers,
+    });
+  } finally {
+    await runtime.dispose();
+  }
 }
 
 async function render(pathname) {
