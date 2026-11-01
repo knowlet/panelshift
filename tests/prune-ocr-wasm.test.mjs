@@ -53,5 +53,6 @@ test("does not suppress non-ENOENT directory errors", async (t) => {
 test("does not suppress removal failures", async (t) => {
   const root = await fixture(t);
   await mkdir(new URL("assets/ort-wasm-directory.wasm/", root), { recursive: true });
-  await assert.rejects(pruneOcrWasm(root), { code: "EISDIR" });
+  // Linux reports EISDIR; macOS unlink(2) reports EPERM for directories.
+  await assert.rejects(pruneOcrWasm(root), (error) => ["EISDIR", "EPERM"].includes(error.code));
 });
