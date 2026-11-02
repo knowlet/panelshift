@@ -17,7 +17,10 @@ for (const [route, count, brandLabel, content] of routes) {
       await page.route("**/*", (request) => new URL(request.request().url()).origin === "http://127.0.0.1:4173"
         ? request.continue() : request.abort());
       await page.goto(route);
-      await page.waitForFunction(() => typeof window.__VINEXT_RSC_NAVIGATE__ === "function");
+      // Vinext 1.x registers navigation on a symbol-keyed runtime. Wait for
+      // hydration as well, so SSR-only anchors cannot satisfy this regression.
+      await page.waitForFunction(() => window.__NEXT_HYDRATED === true
+        && typeof window[Symbol.for("vinext.navigationRuntime")]?.functions?.navigate === "function");
       const homeLinks = page.locator('a[href="/"]');
       await expect(homeLinks).toHaveCount(count);
       await expect(page.getByRole("heading", { name: content, level: 1, exact: true })).toBeVisible();
