@@ -272,25 +272,25 @@ async function translateWithCompatibleApi(
         ],
       }),
     });
+
+    if (!response.ok) throw await compatibleApiResponseError(response);
+    let data: { choices?: Array<{ message?: { content?: string } }> };
+    try {
+      data = (await response.json()) as typeof data;
+    } catch (caught) {
+      throw new CompatibleApiError("invalid_json", { cause: caught });
+    }
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error("TRANSLATION_EMPTY");
+    return parseTranslationPayload(content, regions);
   } catch (caught) {
-    if (caught instanceof DOMException && caught.name === "AbortError") {
+    if (controller.signal.aborted || (caught instanceof DOMException && caught.name === "AbortError")) {
       throw new CompatibleApiError("timeout", { cause: caught });
     }
     throw caught;
   } finally {
     window.clearTimeout(timeout);
   }
-
-  if (!response.ok) throw await compatibleApiResponseError(response);
-  let data: { choices?: Array<{ message?: { content?: string } }> };
-  try {
-    data = (await response.json()) as typeof data;
-  } catch (caught) {
-    throw new CompatibleApiError("invalid_json", { cause: caught });
-  }
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("TRANSLATION_EMPTY");
-  return parseTranslationPayload(content, regions);
 }
 
 async function translateWithChrome(
@@ -826,36 +826,36 @@ export function SidePanel() {
           cache: "no-store",
           signal: controller.signal,
         });
+
+        if (!response.ok) throw await compatibleApiResponseError(response);
+        let payload: unknown;
+        try {
+          payload = await response.json();
+        } catch (caught) {
+          throw new CompatibleApiError("invalid_json", { cause: caught });
+        }
+        const modelIds = extractModelIds(payload);
+        setAvailableModels(modelIds);
+        if (!apiSettings.model.trim() && modelIds.length > 0) {
+          setApiSettings((current) => ({ ...current, model: modelIds[0] }));
+        }
+        setApiConnection(modelIds.length > 0 ? {
+          tone: "success",
+          title: "連線成功",
+          detail: `已載入 ${modelIds.length} 個模型，可直接輸入篩選或從清單選擇。`,
+        } : {
+          tone: "warning",
+          title: "連線成功，但沒有模型清單",
+          detail: "服務回傳空的 data 陣列；請手動輸入 Model 後儲存。",
+        });
       } catch (caught) {
-        if (caught instanceof DOMException && caught.name === "AbortError") {
+        if (controller.signal.aborted || (caught instanceof DOMException && caught.name === "AbortError")) {
           throw new CompatibleApiError("timeout", { cause: caught });
         }
         throw caught;
       } finally {
         window.clearTimeout(timeout);
       }
-
-      if (!response.ok) throw await compatibleApiResponseError(response);
-      let payload: unknown;
-      try {
-        payload = await response.json();
-      } catch (caught) {
-        throw new CompatibleApiError("invalid_json", { cause: caught });
-      }
-      const modelIds = extractModelIds(payload);
-      setAvailableModels(modelIds);
-      if (!apiSettings.model.trim() && modelIds.length > 0) {
-        setApiSettings((current) => ({ ...current, model: modelIds[0] }));
-      }
-      setApiConnection(modelIds.length > 0 ? {
-        tone: "success",
-        title: "連線成功",
-        detail: `已載入 ${modelIds.length} 個模型，可直接輸入篩選或從清單選擇。`,
-      } : {
-        tone: "warning",
-        title: "連線成功，但沒有模型清單",
-        detail: "服務回傳空的 data 陣列；請手動輸入 Model 後儲存。",
-      });
     } catch (caught) {
       const issue = describeCompatibleApiError(caught, "models");
       setAvailableModels([]);
