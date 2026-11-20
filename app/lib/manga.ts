@@ -62,10 +62,16 @@ function boundsFromPoints(points: Point[]): NormalizedRect | null {
 
 function inferOrientation(
   rect: NormalizedRect,
+  imageWidth: number,
+  imageHeight: number,
   language: SourceLanguage,
 ): Orientation {
-  if (rect.height >= rect.width * 1.22) return "vertical";
-  if (rect.width >= rect.height * 1.22) return "horizontal";
+  // Normalized axes have different scales on non-square images. Compare the
+  // clipped box in pixels without changing its normalized overlay coordinates.
+  const width = rect.width * imageWidth;
+  const height = rect.height * imageHeight;
+  if (height >= width * 1.22) return "vertical";
+  if (width >= height * 1.22) return "horizontal";
   return language === "en" ? "horizontal" : "vertical";
 }
 
@@ -100,7 +106,7 @@ function normalizeItem(
     id: `ocr-${String(index + 1).padStart(3, "0")}`,
     rect,
     polygon,
-    orientation: inferOrientation(rect, language),
+    orientation: inferOrientation(rect, imageWidth, imageHeight, language),
   };
 }
 
